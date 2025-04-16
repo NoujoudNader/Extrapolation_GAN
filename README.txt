@@ -1,7 +1,12 @@
-# HurriGAN
+HurriGAN
 
 The project consisted of two phases:
+
 1- Processing:
+  - Storms_Preprocessing: Includes adjusting the stations of each storm to have consistent numbre of values and removing the stations with outlier values.
+  - Stations-train-test-split: Cluster the stations by coordinates, then from each cluster take 1 station to form the testing set.
+
+2- Generative AI code: Contains the model building, architecture and training.
 
 ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
 
