@@ -1,3 +1,4 @@
+### Libraries
 import warnings
 warnings.filterwarnings('ignore')
 
@@ -28,8 +29,11 @@ if not os.path.exists("loss_plots"):
 
 if not os.path.exists("generated_data"):
     os.makedirs("generated_data")
+#################################################################################################################################
 
-# Training dataframe
+### Data Loading
+
+# Training dataframe - Pivot table
 train_df= pd.read_csv("train_df_filtered.csv")
 train_df['time_UTC']= pd.to_datetime(train_df['time_UTC'])
 
@@ -40,17 +44,15 @@ pivot_df = pivot_df.iloc[:, :180]
 new_row = pivot_df.iloc[-1]
 pivot_df.loc['Filler'] = new_row
 
-# Testing dataframe
+# Testing dataframe - Pivot Table
 testing_df= pd.read_csv("test_df_filtered.csv")
 testing_df['time_UTC']= pd.to_datetime(testing_df['time_UTC'])
 
 testing_df.drop(['index','Unnamed: 0','forecast_data','observed_data','time_UTC_dt'], axis=1, inplace= True)
 testing_pivot = testing_df.pivot_table(values='offset', index='time_UTC', columns='station_id', aggfunc='first')
 
-# Training coords
+# Station Coords for Training & Testing Stations Loading & Processing
 coords_df = train_df[['station_id', 'x', 'y']].drop_duplicates()
-
-# Testing coords
 testing_coords = testing_df[['station_id', 'x', 'y']].drop_duplicates()
 
 coords_scaler = MinMaxScaler()
@@ -62,15 +64,16 @@ testing_coords[['x', 'y']] = coords_scaler.transform(testing_coords[['x', 'y']])
 coords_df['coords'] = list(zip(coords_df['x'], coords_df['y']))
 testing_coords['coords'] = list(zip(testing_coords['x'], testing_coords['y']))
 
-# Training coords array
+# Coords Arrays
 coords_array = coords_df[['x', 'y']].values
-# Testing coords array
 testing_coords_array = testing_coords[['x', 'y']].values
 
-## Prepare Data
+#################################################################################################################################
 
-seq_len = 5
-n_seq = 21
+### Data Preprocessing
+
+seq_len = 5 # number of rows in the matrix
+n_seq = 21 # number of columns in the matrix
 
 # Normalize the dataframe & create the equivalent dictionary
 scaler_ts = MinMaxScaler()
@@ -122,10 +125,9 @@ test_temp_series = iter(tf.data.Dataset
 					 .from_generator(make_temp_random_data, output_types=tf.float32)
 					 .batch(1)
 					 .repeat())
+#################################################################################################################################
 
-## TimeGAN Components
-
-## Model Architectures & Inputs
+### Hurri-GAN Components - Model Architecture & Inputs
 
 autoencoder_optimizer= Adam()
 supervisor_optimizer= Adam()
@@ -137,7 +139,7 @@ bce = BinaryCrossentropy()
 
 neurons_count= 128 #Example
 
-# Input Placeholders
+# Input Placeholders for Components Creation
 input_shape = (seq_len, n_seq)
 static_dim = 2
 
@@ -318,8 +320,8 @@ H_t_hat, H_s_hat = supervisor_model([E_t_hat, E_s_hat])
 Y_fake = discriminator([H_t_hat, H_s_hat])
 
 adversarial_supervised = Model(inputs=[Z, S],
-							   outputs=Y_fake,
-							   name='AdversarialNetSupervised')
+				outputs=Y_fake,
+				name='AdversarialNetSupervised')
 
 adversarial_supervised.compile(optimizer= Adam(), loss= mse)
 
@@ -335,13 +337,13 @@ adversarial_emb = Model(inputs=[Z, S],
 adversarial_emb.compile(optimizer= Adam(), loss= mse)
 
 # Real Data Discriminator
-# Embedder takes real data - Discriminator takes embeddings
+# Embedder takes real data - Discriminator takes equivalent embeddings
 
 Y_real = discriminator([H, HS])
 
 discriminator_real = Model(inputs=[X,S],
-							outputs=Y_real,
-							name='DiscriminatorReal')
+			   outputs=Y_real,
+			   name='DiscriminatorReal')
 
 # Synthetic Data Generator
 # Generator - Supervisor - Recovery
@@ -353,13 +355,15 @@ synthetic_data = Model(inputs=[Z, S],
 					   name='SyntheticData')
 
 synthetic_data.compile(optimizer= Adam(), loss= mse)
+#################################################################################################################################
 
-## TimeGAN Training
+### Hurri-GAN Training
 
 # Train steps and weights
 train_steps_1 = 500
 train_steps_2 = 2000 # Example number of epochs
 
+# Default weights as suggested in the original TimeGAN
 temp_embedding_weight= 10
 static_embedding_weight= 15
 gamma = 1
@@ -395,6 +399,7 @@ for step in tqdm(range(train_steps_1)):
         autoencoder_training_history.append(step_e_loss_t0.numpy())
         autoencoder_static_loss_hist.append(step_stat_loss.numpy())
 
+# Plots
 plt.figure(figsize=(20, 10))
 plt.plot(range(0, len(autoencoder_training_history) * 5, 5), autoencoder_training_history, label='Embedding Loss')
 plt.xlabel('Steps')
@@ -418,6 +423,7 @@ plt.close()
 print("Finished AutoEncoder Training")
 
 # Phase 2: Supervisor Training
+
 @tf.function
 def train_supervisor(x, s):
 	with tf.GradientTape() as tape:
@@ -444,6 +450,7 @@ for step in tqdm(range(train_steps_1)):
         supervised_temp_training_history.append(step_gt_loss_s.numpy())
         supervised_static_training_history.append(step_gs_loss_s.numpy())
 
+# Plots
 plt.figure(figsize=(20, 10))
 plt.plot(range(0, len(supervised_temp_training_history) * 5, 5), supervised_temp_training_history, label='Supervised Temporal Loss')
 plt.xlabel('Steps')
@@ -570,13 +577,6 @@ g_loss_u_history = []
 g_loss_s_temp_history = []
 g_loss_s_static_history = []
 g_loss_v_history = []
-
-syn_gen_0 = []
-syn_gen_1 = []
-syn_gen_2 = []
-syn_gen_3 = []
-syn_gen_4 = []
-syn_gen_5 = []
 		
 for step in tqdm(range(train_steps_2)):
     for x_batch, s_batch in train_dataset:
@@ -593,19 +593,6 @@ for step in tqdm(range(train_steps_2)):
         step_d_loss = get_discriminator_loss(x_batch, s_batch, Z_) 
         if step_d_loss > 0.15:
             step_d_loss = train_discriminator(x_batch, s_batch, Z_)
-
-        if step == 0:
-            syn_gen_0.append(x_hat)
-        if step == 400:
-            syn_gen_1.append(x_hat)
-        if step == 800:
-            syn_gen_2.append(x_hat)
-        if step == 1200:
-            syn_gen_3.append(x_hat)
-        if step == 1600:
-            syn_gen_4.append(x_hat)
-        if step == 1999:
-            syn_gen_5.append(x_hat)
             
     if step % 5 == 0:  
         d_loss_history.append(step_d_loss.numpy())
@@ -616,58 +603,8 @@ for step in tqdm(range(train_steps_2)):
 
 print("Finished Joint Training")
 
-list_0 = []
-list_1 = []
-list_2 = []
-list_3 = []
-list_4 = []
-list_5 = []
-
-for i in range(len(syn_gen_0)):
-	list_0.append(syn_gen_0[i].numpy().flatten().tolist())
-	
-for i in range(len(syn_gen_1)):
-	list_1.append(syn_gen_1[i].numpy().flatten().tolist())
-	
-for i in range(len(syn_gen_2)):
-	list_2.append(syn_gen_2[i].numpy().flatten().tolist())
-	
-for i in range(len(syn_gen_3)):
-	list_3.append(syn_gen_3[i].numpy().flatten().tolist())
-	
-for i in range(len(syn_gen_4)):
-	list_4.append(syn_gen_4[i].numpy().flatten().tolist())
-	
-for i in range(len(syn_gen_5)):
-	list_5.append(syn_gen_5[i].numpy().flatten().tolist())
-
-def plot_syn(gen_list, epoch_numb):
-	plt.figure(figsize=(20, 4))
-
-	plt.subplot(1, 2, 2)
-
-	for i in range(len(gen_list)):    
-		plt.plot(gen_list[i])
-
-	epoch= epoch_numb
-	plt.xlabel('Time')
-	plt.ylabel('Generated offset')
-	plt.title(f'Training Synthetic Data {epoch}')
-	plt.grid(True)
-
-	plt.tight_layout()
-	plt.savefig(f"generated_data/Training_Generations_{epoch}.png")
-	plt.close()
-
-plot_syn(list_0, 0)
-plot_syn(list_1, 400)
-plot_syn(list_2, 800)
-plot_syn(list_3, 1200)
-plot_syn(list_4, 1600)
-plot_syn(list_5, 2000)
-
+# Plots
 plt.figure(figsize=(20, 10))
-
 plt.subplot(1, 2, 1)
 plt.plot(range(0, len(d_loss_history) * 5, 5), d_loss_history, label='Discriminator Loss')
 plt.xlabel('Steps')
@@ -675,13 +612,11 @@ plt.ylabel('Loss')
 plt.title('Discriminator Loss Over Training Steps')
 plt.legend()
 plt.grid(True)
-
 plt.tight_layout()
 plt.savefig("loss_plots/Discriminator_Loss.png")
 plt.close()
 
 plt.figure(figsize=(20, 10))
-
 plt.subplot(1, 2, 2)
 plt.plot(range(0, len(g_loss_u_history) * 5, 5), g_loss_u_history, label='Generator Loss (U)')
 plt.plot(range(0, len(g_loss_s_temp_history) * 5, 5), g_loss_s_temp_history, label='Generator Temporal Loss (S)')
@@ -692,11 +627,12 @@ plt.ylabel('Loss')
 plt.title('Generator Losses Over Training Steps')
 plt.legend()
 plt.grid(True)
-
 plt.tight_layout()
 plt.savefig("loss_plots/Generator_Losses.png")
 plt.close()
+#################################################################################################################################
 
+# Testing the model
 # Making the data from which the Testing Generation takes input
 		
 test_temp_series = iter(tf.data.Dataset
@@ -747,6 +683,7 @@ unscaled_df = pd.DataFrame(unscaled_data)
 unscaled_df = unscaled_df.drop(unscaled_df.index[-1])
 unscaled_df.to_csv("generated_data/generated_data.csv", index= False)
 
+## Metrics
 list_real= []
 list_gen = []
 
@@ -765,6 +702,7 @@ mae = np.mean((array1 - array2))
 print("MSE:", mse)
 print("MAE:", mae)
 
+# Plots
 i= 0
 
 for column in unscaled_df.columns:
